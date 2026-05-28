@@ -1,0 +1,12 @@
+fastapi==0.115.0
+uvicorn==0.30.0
+faster-whisper==1.0.3
+pyaudio==0.2.14
+webrtcvad==2.0.10
+mss==9.0.1
+pytesseract==0.3.13
+sentence-transformers==3.0.1
+chromadb==0.5.3
+anthropic==0.34.0
+Pillow==10.4.0
+python-Levenshtein==0.25.1
