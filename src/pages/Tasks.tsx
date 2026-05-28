@@ -62,7 +62,11 @@ function TaskCard({
       <button
         type="button"
         onClick={() => onToggle(item.id, !item.done)}
-        className="mt-2 w-full rounded-lg border border-gray-200 py-1 text-xs text-gray-500 hover:bg-gray-50 dark:border-gray-700 dark:hover:bg-gray-800"
+        className={`mt-2 w-full rounded-lg py-1.5 text-xs font-medium transition-colors ${
+          item.done
+            ? "border border-gray-200 text-gray-500 hover:bg-gray-50 dark:border-gray-700 dark:hover:bg-gray-800"
+            : "border border-accent/40 bg-accent text-white hover:bg-accent-dark"
+        }`}
       >
         {item.done ? "Move to To do" : "Mark done"}
       </button>
