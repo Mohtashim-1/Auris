@@ -16,6 +16,8 @@ struct TrayState {
 
 static SIDECAR: Mutex<Option<Child>> = Mutex::new(None);
 
+const PORT: u16 = 9847;
+
 fn project_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
@@ -27,7 +29,19 @@ fn sidecar_dir() -> PathBuf {
     project_root().join("sidecar")
 }
 
+fn free_port(port: u16) {
+    #[cfg(unix)]
+    {
+        let _ = Command::new("sh")
+            .arg("-c")
+            .arg(format!("fuser -k {port}/tcp 2>/dev/null || true"))
+            .output();
+        std::thread::sleep(Duration::from_millis(400));
+    }
+}
+
 fn start_sidecar() -> Result<(), String> {
+    free_port(PORT);
     let dir = sidecar_dir();
     let script = dir.join("main.py");
     if !script.exists() {
@@ -209,8 +223,9 @@ pub fn run() {
             wait_for_sidecar(30);
             let minimized = read_start_minimized();
             if minimized {
+                let handle = app_handle.clone();
                 let _ = app_handle.run_on_main_thread(move || {
-                    if let Some(w) = app_handle.get_webview_window("main") {
+                    if let Some(w) = handle.get_webview_window("main") {
                         let _ = w.hide();
                     }
                 });

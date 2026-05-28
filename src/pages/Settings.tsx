@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
 import { api } from "../lib/api";
+import { invokeSafe } from "../lib/tauri";
+import { applyTheme, storeTheme, type Theme } from "../lib/theme";
 
 const WHISPER_MODELS = [
   { value: "tiny.en", label: "Tiny (fastest)" },
@@ -14,11 +16,19 @@ const SCREENSHOT_INTERVALS = [
   { value: "30", label: "Every 30 seconds" },
 ];
 
+const THEMES: { value: Theme; label: string }[] = [
+  { value: "system", label: "System" },
+  { value: "light", label: "Light" },
+  { value: "dark", label: "Dark" },
+];
+
 export function Settings() {
   const [apiKey, setApiKey] = useState("");
   const [whisperModel, setWhisperModel] = useState("base.en");
   const [screenshotInterval, setScreenshotInterval] = useState("10");
   const [storagePath, setStoragePath] = useState("");
+  const [theme, setTheme] = useState<Theme>("system");
+  const [startMinimized, setStartMinimized] = useState(true);
   const [currentPath, setCurrentPath] = useState("");
   const [defaultPath, setDefaultPath] = useState("");
   const [saved, setSaved] = useState(false);
@@ -32,11 +42,19 @@ export function Settings() {
         setWhisperModel(s.whisper_model ?? "base.en");
         setScreenshotInterval(s.screenshot_interval ?? "10");
         setStoragePath(s.storage_path ?? "");
+        setTheme((s.theme as Theme) || "system");
+        setStartMinimized(s.start_minimized !== "0");
         setCurrentPath(s.current_storage_path);
         setDefaultPath(s.default_storage_path);
       })
       .catch(() => setError("Could not load settings"));
   }, []);
+
+  const handleThemeChange = (t: Theme) => {
+    setTheme(t);
+    storeTheme(t);
+    applyTheme(t);
+  };
 
   const handleSave = async () => {
     setError(null);
@@ -47,7 +65,11 @@ export function Settings() {
         whisper_model: whisperModel,
         screenshot_interval: screenshotInterval,
         storage_path: storagePath,
+        theme,
+        start_minimized: startMinimized ? "1" : "0",
       });
+      storeTheme(theme);
+      applyTheme(theme);
       setSaved(true);
       setTimeout(() => setSaved(false), 3000);
     } catch (e) {
@@ -60,7 +82,7 @@ export function Settings() {
       <header className="border-b border-gray-200 px-6 py-4 dark:border-gray-800">
         <h2 className="text-xl font-semibold">Settings</h2>
         <p className="text-sm text-gray-500 dark:text-gray-400">
-          API key and preferences (stored locally)
+          Preferences stored locally · Ctrl+Shift+R toggles recording
         </p>
       </header>
 
@@ -71,13 +93,28 @@ export function Settings() {
           </p>
         )}
         {saved && (
-          <p className="rounded-lg bg-accent/10 px-4 py-3 text-sm text-accent dark:text-accent">
+          <p className="rounded-lg bg-accent/10 px-4 py-3 text-sm text-accent">
             Settings saved.
           </p>
         )}
 
         <section>
-          <label className="mb-1.5 block text-sm font-medium text-gray-700 dark:text-gray-300">
+          <label className="mb-1.5 block text-sm font-medium">Appearance</label>
+          <select
+            value={theme}
+            onChange={(e) => handleThemeChange(e.target.value as Theme)}
+            className="w-full rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm dark:border-gray-700 dark:bg-gray-900"
+          >
+            {THEMES.map((t) => (
+              <option key={t.value} value={t.value}>
+                {t.label}
+              </option>
+            ))}
+          </select>
+        </section>
+
+        <section>
+          <label className="mb-1.5 block text-sm font-medium">
             Claude API key
           </label>
           <input
@@ -87,13 +124,10 @@ export function Settings() {
             placeholder="sk-ant-…"
             className="w-full rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm dark:border-gray-700 dark:bg-gray-900"
           />
-          <p className="mt-1 text-xs text-gray-400">
-            Used only for summarization and chat — sent directly to Anthropic.
-          </p>
         </section>
 
         <section>
-          <label className="mb-1.5 block text-sm font-medium text-gray-700 dark:text-gray-300">
+          <label className="mb-1.5 block text-sm font-medium">
             Whisper model
           </label>
           <select
@@ -110,7 +144,7 @@ export function Settings() {
         </section>
 
         <section>
-          <label className="mb-1.5 block text-sm font-medium text-gray-700 dark:text-gray-300">
+          <label className="mb-1.5 block text-sm font-medium">
             Screenshot OCR interval
           </label>
           <select
@@ -127,7 +161,19 @@ export function Settings() {
         </section>
 
         <section>
-          <label className="mb-1.5 block text-sm font-medium text-gray-700 dark:text-gray-300">
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={startMinimized}
+              onChange={(e) => setStartMinimized(e.target.checked)}
+              className="rounded"
+            />
+            Start minimized to system tray
+          </label>
+        </section>
+
+        <section>
+          <label className="mb-1.5 block text-sm font-medium">
             Storage location
           </label>
           <input
@@ -138,18 +184,26 @@ export function Settings() {
             className="w-full rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm dark:border-gray-700 dark:bg-gray-900"
           />
           <p className="mt-1 text-xs text-gray-400">
-            Current: <code className="text-xs">{currentPath}</code>. Leave empty
-            for default. Restart app after changing.
+            Current: <code>{currentPath}</code>. Restart after changing.
           </p>
         </section>
 
-        <button
-          type="button"
-          onClick={() => void handleSave()}
-          className="rounded-xl bg-primary px-6 py-2.5 text-sm font-medium text-white hover:bg-primary-dark"
-        >
-          Save settings
-        </button>
+        <div className="flex gap-2">
+          <button
+            type="button"
+            onClick={() => void handleSave()}
+            className="rounded-xl bg-primary px-6 py-2.5 text-sm font-medium text-white hover:bg-primary-dark"
+          >
+            Save settings
+          </button>
+          <button
+            type="button"
+            onClick={() => void invokeSafe("show_main_window")}
+            className="rounded-xl border border-gray-200 px-4 py-2.5 text-sm dark:border-gray-700"
+          >
+            Show window
+          </button>
+        </div>
       </div>
     </div>
   );

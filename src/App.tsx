@@ -1,5 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
+import { invokeSafe, listenSafe } from "./lib/tauri";
+import {
+  isPermissionGranted,
+  requestPermission,
+  sendNotification,
+} from "@tauri-apps/plugin-notification";
+import { LoadingScreen } from "./components/LoadingScreen";
 import { Sidebar, type PageId } from "./components/Sidebar";
 import { AskAuris } from "./pages/AskAuris";
 import { History } from "./pages/History";
@@ -10,9 +16,11 @@ import { api, type SessionSummary, type TranscriptLine } from "./lib/api";
 
 function App() {
   const [page, setPage] = useState<PageId>("today");
+  const [sidecarReady, setSidecarReady] = useState(false);
   const [recording, setRecording] = useState(false);
   const [modelsReady, setModelsReady] = useState(false);
   const [modelError, setModelError] = useState<string | null>(null);
+  const [sidecarStale, setSidecarStale] = useState(false);
   const [hasApiKey, setHasApiKey] = useState(false);
   const [lines, setLines] = useState<TranscriptLine[]>([]);
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
@@ -22,6 +30,10 @@ function App() {
   const recordingStartedAt = useRef<number | null>(null);
   const eventSourceRef = useRef<EventSource | null>(null);
 
+  const syncTrayRecording = useCallback((rec: boolean) => {
+    void invokeSafe("set_recording_state", { recording: rec });
+  }, []);
+
   const refreshSessions = useCallback(() => {
     api.listSessions().then(setSessions).catch(() => setSessions([]));
   }, []);
@@ -29,10 +41,13 @@ function App() {
   const refreshStatus = useCallback(async () => {
     try {
       const status = await api.getStatus();
+      setSidecarReady(true);
       setRecording(status.recording);
       setModelsReady(status.models_ready);
       setModelError(status.model_error);
       setHasApiKey(status.has_api_key);
+      setSidecarStale((status.api_version ?? 0) < 3);
+      syncTrayRecording(status.recording);
       if (status.recording && !recordingStartedAt.current) {
         recordingStartedAt.current = Date.now();
       }
@@ -41,28 +56,32 @@ function App() {
         setSessionDurationSec(0);
       }
     } catch {
+      setSidecarReady(false);
       setModelError("Cannot reach sidecar on port 9847");
       setModelsReady(false);
     }
-  }, []);
+  }, [syncTrayRecording]);
 
-  const notifySummaryReady = useCallback(async (title: string, summary: string) => {
-    try {
-      let granted = await isPermissionGranted();
-      if (!granted) {
-        const perm = await requestPermission();
-        granted = perm === "granted";
+  const notifySummaryReady = useCallback(
+    async (title: string, summary: string) => {
+      try {
+        let granted = await isPermissionGranted();
+        if (!granted) {
+          const perm = await requestPermission();
+          granted = perm === "granted";
+        }
+        if (granted) {
+          await sendNotification({
+            title: `Summary ready: ${title}`,
+            body: summary.slice(0, 200) + (summary.length > 200 ? "…" : ""),
+          });
+        }
+      } catch {
+        /* optional */
       }
-      if (granted) {
-        await sendNotification({
-          title: `Summary ready: ${title}`,
-          body: summary.slice(0, 200) + (summary.length > 200 ? "…" : ""),
-        });
-      }
-    } catch {
-      /* notifications optional */
-    }
-  }, []);
+    },
+    []
+  );
 
   const connectStream = useCallback(() => {
     if (eventSourceRef.current) return;
@@ -78,8 +97,7 @@ function App() {
           summary?: string;
         };
         if (payload.type === "transcript" && payload.line) {
-          const line = payload.line;
-          setLines((prev) => [...prev, line]);
+          setLines((prev) => [...prev, payload.line!]);
         }
         if (payload.type === "summary_ready" && payload.title) {
           void notifySummaryReady(payload.title, payload.summary ?? "");
@@ -99,17 +117,17 @@ function App() {
 
   useEffect(() => {
     refreshStatus();
-    const interval = setInterval(refreshStatus, 5000);
+    const interval = setInterval(refreshStatus, 3000);
     return () => clearInterval(interval);
   }, [refreshStatus]);
 
   useEffect(() => {
-    connectStream();
+    if (sidecarReady) connectStream();
     return () => {
       eventSourceRef.current?.close();
       eventSourceRef.current = null;
     };
-  }, [connectStream]);
+  }, [sidecarReady, connectStream]);
 
   useEffect(() => {
     if (!recording || !recordingStartedAt.current) return;
@@ -124,9 +142,7 @@ function App() {
   }, [recording]);
 
   useEffect(() => {
-    if (page === "history") {
-      refreshSessions();
-    }
+    if (page === "history") refreshSessions();
   }, [page, recording, refreshSessions]);
 
   const handleStart = useCallback(async () => {
@@ -137,13 +153,14 @@ function App() {
       await api.startRecording();
       recordingStartedAt.current = Date.now();
       setRecording(true);
+      syncTrayRecording(true);
       setSessionDurationSec(0);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to start");
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [syncTrayRecording]);
 
   const handleStop = useCallback(async () => {
     setLoading(true);
@@ -151,6 +168,7 @@ function App() {
     try {
       await api.stopRecording();
       setRecording(false);
+      syncTrayRecording(false);
       recordingStartedAt.current = null;
       refreshSessions();
     } catch (e) {
@@ -158,7 +176,7 @@ function App() {
     } finally {
       setLoading(false);
     }
-  }, [refreshSessions]);
+  }, [refreshSessions, syncTrayRecording]);
 
   const handleRetryModels = async () => {
     try {
@@ -173,15 +191,57 @@ function App() {
   const recordingRef = useRef(recording);
   recordingRef.current = recording;
 
+  const toggleRecording = useCallback(() => {
+    if (recordingRef.current) void handleStop();
+    else void handleStart();
+  }, [handleStart, handleStop]);
+
   useEffect(() => {
-    const onTrayToggle = () => {
-      if (recordingRef.current) void handleStop();
-      else void handleStart();
-    };
+    const onTrayToggle = () => toggleRecording();
     window.addEventListener("auris-tray-toggle-record", onTrayToggle);
     return () =>
       window.removeEventListener("auris-tray-toggle-record", onTrayToggle);
-  }, [handleStart, handleStop]);
+  }, [toggleRecording]);
+
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    void listenSafe("auris-shortcut-toggle-record", toggleRecording).then(
+      (fn) => {
+        unlisten = fn;
+      }
+    );
+    return () => unlisten?.();
+  }, [toggleRecording]);
+
+  if (!sidecarReady) {
+    return (
+      <LoadingScreen
+        message="Connecting to Auris sidecar"
+        submessage="Starting Python backend on port 9847…"
+        error={modelError}
+      />
+    );
+  }
+
+  if (sidecarStale) {
+    return (
+      <LoadingScreen
+        message="Sidecar needs a restart"
+        submessage="An older Python backend is still running on port 9847. Quit Auris fully and run npm run tauri dev again, or run: fuser -k 9847/tcp"
+        error="Export, re-summarize, and auto-titles require API version 3."
+      />
+    );
+  }
+
+  if (!modelsReady && !modelError) {
+    return (
+      <LoadingScreen
+        message="Loading AI models"
+        submessage="Downloading Whisper and sentence-transformers on first run…"
+        onRetry={() => void handleRetryModels()}
+      />
+    );
+  }
 
   const renderPage = () => {
     switch (page) {
@@ -201,7 +261,13 @@ function App() {
           />
         );
       case "history":
-        return <History sessions={sessions} onRefresh={refreshSessions} />;
+        return (
+          <History
+            sessions={sessions}
+            hasApiKey={hasApiKey}
+            onRefresh={refreshSessions}
+          />
+        );
       case "search":
         return <Search />;
       case "ask":

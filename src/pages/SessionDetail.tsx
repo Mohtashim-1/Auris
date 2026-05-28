@@ -111,14 +111,22 @@ export function SessionDetail({
           <div className="flex flex-wrap gap-2">
             <button
               type="button"
-              onClick={() => void api.exportSession(sessionId, "md")}
+              onClick={() =>
+                void api.exportSession(sessionId, "md").catch((e) =>
+                  setError(e instanceof Error ? e.message : "Export failed")
+                )
+              }
               className="rounded-lg border border-gray-200 px-3 py-1.5 text-xs hover:bg-gray-50 dark:border-gray-700 dark:hover:bg-gray-800"
             >
               Export MD
             </button>
             <button
               type="button"
-              onClick={() => void api.exportSession(sessionId, "txt")}
+              onClick={() =>
+                void api.exportSession(sessionId, "txt").catch((e) =>
+                  setError(e instanceof Error ? e.message : "Export failed")
+                )
+              }
               className="rounded-lg border border-gray-200 px-3 py-1.5 text-xs hover:bg-gray-50 dark:border-gray-700 dark:hover:bg-gray-800"
             >
               Export TXT

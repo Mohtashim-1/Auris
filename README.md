@@ -28,8 +28,6 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-First run downloads Whisper and embedding models (~200MB total).
-
 ### Node
 
 ```bash
@@ -42,49 +40,38 @@ npm install
 npm run tauri dev
 ```
 
-Sidecar only:
+## Features by phase
 
-```bash
-npm run sidecar
-```
-
-## Features
-
-### Phase 1
+### Phase 1 — Core listening
 - Live microphone transcription (Whisper + VAD)
 - SQLite storage + SSE live feed
-- System tray
 
-### Phase 2
-- Periodic screenshot OCR (Tesseract, deduplicated)
-- ChromaDB semantic search (`all-MiniLM-L6-v2`)
-- Session summarization + action items (Claude, BYOK)
-- RAG chat with citations
-- History detail, Search, Ask Auris, Settings
-- Desktop notification when summary is ready
+### Phase 2 — Memory & AI
+- Screenshot OCR, ChromaDB semantic search
+- Claude summarization, RAG chat, History/Search/Settings
+
+### Phase 3 — Production polish
+- **Start minimized to tray** (configurable in Settings)
+- **Startup loading screen** while sidecar and models initialize
+- **Dark / light / system theme**
+- **Global shortcut** `Ctrl+Shift+R` to toggle recording
+- **Tray menu** updates Start/Stop label while recording
+- **Session export** (Markdown / plain text)
+- **Re-summarize** and **delete** sessions from History detail
+- **Screen captures** shown in session detail
+- **Microphone permission guide** on capture errors
 
 ## Settings
 
 | Setting | Description |
 |---------|-------------|
-| Claude API key | Required for summaries and chat |
-| Whisper model | `tiny.en`, `base.en`, `small.en` |
+| Appearance | Light / dark / system |
+| Claude API key | Summaries and chat |
+| Whisper model | tiny.en / base.en / small.en |
 | Screenshot interval | 5s / 10s / 30s / off |
+| Start minimized | Launch hidden to tray |
 | Storage path | Custom data directory (restart required) |
-
-## API
-
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/status` | Health, models, recording |
-| POST | `/recording/start` | Start mic + OCR |
-| POST | `/recording/stop` | Stop + trigger summarization |
-| GET | `/stream` | SSE: transcript, summary_ready |
-| GET | `/search?q=` | Semantic search |
-| POST | `/chat` | RAG chat (SSE stream) |
-| GET/POST | `/settings` | Preferences |
 
 ## License
 
 MIT
-# Auris

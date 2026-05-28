@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
+import { MicPermissionGuide } from "../components/MicPermissionGuide";
 import { TranscriptLine } from "../components/TranscriptLine";
-import type { TranscriptLine as Line } from "../lib/api";
+import { isMicError, type TranscriptLine as Line } from "../lib/api";
 
 interface TodayProps {
   lines: Line[];
@@ -38,17 +39,11 @@ export function Today({
       <header className="border-b border-gray-200 px-6 py-4 dark:border-gray-800">
         <h2 className="text-xl font-semibold">Today</h2>
         <p className="text-sm text-gray-500 dark:text-gray-400">
-          Live transcript from your microphone
+          Live transcript · Ctrl+Shift+R to toggle
         </p>
       </header>
 
       <div className="border-b border-gray-200 px-6 py-4 dark:border-gray-800">
-        {!modelsReady && !modelError && (
-          <div className="mb-3 rounded-lg bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:bg-amber-900/30 dark:text-amber-200">
-            Loading Whisper model… This may take a minute on first run.
-          </div>
-        )}
-
         {modelError && (
           <div className="mb-3 flex items-center justify-between gap-3 rounded-lg bg-red-50 px-4 py-3 text-sm text-red-800 dark:bg-red-900/30 dark:text-red-200">
             <span>Model load failed: {modelError}</span>
@@ -69,7 +64,9 @@ export function Today({
           </div>
         )}
 
-        {error && (
+        {error && isMicError(error) && <MicPermissionGuide />}
+
+        {error && !isMicError(error) && (
           <div className="mb-3 rounded-lg bg-red-50 px-4 py-3 text-sm text-red-800 dark:bg-red-900/30 dark:text-red-200">
             {error}
           </div>

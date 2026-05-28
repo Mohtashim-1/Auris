@@ -40,6 +40,7 @@ logging.basicConfig(
 logger = logging.getLogger("auris.sidecar")
 
 PORT = 9847
+API_VERSION = 3
 
 
 class AppState:
@@ -154,9 +155,23 @@ class AppState:
         logger.info("Recording stopped: session %s", session_id)
         return {"session_id": session_id, "status": "stopped"}
 
+    def _set_fallback_title(self, session_id: str) -> str:
+        row = db.get_session(session_id)
+        if row and row.get("title"):
+            return row["title"]
+        started = (row or {}).get("started_at", "")[:16].replace("T", " ")
+        title = f"Session {started}" if started else "Session"
+        summary = (row or {}).get("summary") or ""
+        db.update_session_summary(session_id, title, summary)
+        return title
+
     def _summarize_background(self, session_id: str) -> None:
         result = ai.summarize_session(session_id)
-        if result and self._loop:
+        if not result:
+            title = self._set_fallback_title(session_id)
+            logger.info("Using fallback title for %s: %s", session_id[:8], title)
+            return
+        if self._loop:
             asyncio.run_coroutine_threadsafe(
                 self.broadcast_event(
                     "summary_ready",
@@ -213,6 +228,7 @@ def get_status() -> dict[str, Any]:
         "model_error": state.model_error,
         "whisper_model": state.whisper_model,
         "has_api_key": bool(db.get_setting("api_key")),
+        "api_version": API_VERSION,
     }
 
 
@@ -269,12 +285,7 @@ def list_sessions():
     return db.list_sessions()
 
 
-@app.get("/sessions/{session_id}")
-def get_session(session_id: str):
-    session = db.get_session(session_id)
-    if session is None:
-        raise HTTPException(status_code=404, detail="Session not found")
-    return session
+# Sub-routes must be registered before GET /sessions/{session_id}
 
 
 @app.post("/sessions/{session_id}/summarize")
@@ -305,16 +316,21 @@ def summarize_session_endpoint(session_id: str):
 @app.get("/sessions/{session_id}/export")
 def export_session_endpoint(
     session_id: str,
-    format: str = Query("md", pattern="^(md|txt)$"),
+    fmt: str = Query("md", alias="format", pattern="^(md|txt)$"),
 ):
+    session = db.get_session(session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Session not found")
     try:
-        content = export_mod.export_session(session_id, format)
+        content = export_mod.export_session(session_id, fmt)
     except ValueError:
         raise HTTPException(status_code=404, detail="Session not found")
-    media = "text/markdown" if format == "md" else "text/plain"
-    filename = f"auris-session-{session_id[:8]}.{format}"
-    return StreamingResponse(
-        iter([content]),
+    from fastapi.responses import Response
+
+    media = "text/markdown" if fmt == "md" else "text/plain"
+    filename = f"auris-session-{session_id[:8]}.{fmt}"
+    return Response(
+        content=content,
         media_type=media,
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
@@ -328,6 +344,14 @@ def delete_session(session_id: str):
     except Exception:
         logger.exception("ChromaDB delete failed for %s", session_id)
     return {"deleted": session_id}
+
+
+@app.get("/sessions/{session_id}")
+def get_session(session_id: str):
+    session = db.get_session(session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return session
 
 
 @app.patch("/action-items/{item_id}")

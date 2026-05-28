@@ -8,6 +8,7 @@ export interface StatusResponse {
   model_error: string | null;
   whisper_model: string;
   has_api_key: boolean;
+  api_version?: number;
 }
 
 export interface TranscriptLine {
@@ -140,7 +141,16 @@ export const api = {
     const res = await fetch(
       `${SIDECAR_BASE}/sessions/${id}/export?format=${format}`
     );
-    if (!res.ok) throw new Error("Export failed");
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      const detail =
+        typeof body === "object" && body && "detail" in body
+          ? String((body as { detail: unknown }).detail)
+          : res.status === 404
+            ? "Route not found — restart Auris to load the latest sidecar"
+            : "Export failed";
+      throw new Error(detail);
+    }
     const blob = await res.blob();
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
