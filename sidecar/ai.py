@@ -1,4 +1,4 @@
-"""Claude API: session summarization and RAG chat."""
+"""Claude API: session summarization, tasks, and RAG chat."""
 
 from __future__ import annotations
 
@@ -16,30 +16,42 @@ logger = logging.getLogger(__name__)
 
 MODEL = "claude-sonnet-4-20250514"
 
-SUMMARIZE_PROMPT = """You are a meeting assistant. Summarize this conversation and extract action items as a JSON object with keys: summary (string), action_items (array of strings), title (string).
+SUMMARIZE_PROMPT = """You are a meeting assistant. You receive a conversation transcript and optional screen snapshots taken while the user spoke.
 
-Respond with ONLY valid JSON, no markdown fences."""
+Create:
+1. title — short descriptive title
+2. summary — 2-4 sentences of what was discussed
+3. action_items — concrete tasks to do, combining commitments from speech AND anything visible on screen (deadlines, names, todos, links, buttons). Each item one clear sentence.
 
-CHAT_SYSTEM = """You are Auris, an AI assistant with access to the user's conversation history and screen context. Answer based on the provided context. If you don't know, say so. Always cite which session/date the information comes from when using context."""
+Respond with ONLY valid JSON:
+{"title":"...","summary":"...","action_items":["task 1","task 2"]}"""
+
+CHAT_SYSTEM = """You are Auris, an AI assistant with access to the user's conversation transcripts. Answer based on the provided context. If you don't know, say so. Cite which session/date information comes from."""
 
 
 def _client() -> anthropic.Anthropic:
-    api_key = db.get_setting("api_key")
-    if not api_key:
-        raise ValueError("Claude API key not configured. Add it in Settings.")
+    api_key = (db.get_setting("api_key") or "").strip()
+    if not db.has_claude_api_key():
+        raise ValueError("Claude API key not configured. Add it in Settings and click Save.")
     return anthropic.Anthropic(api_key=api_key)
 
 
-def _format_transcript(session_id: str) -> str:
+def _format_session_for_ai(session_id: str) -> str:
     lines = db.get_session_transcript(session_id)
     if not lines:
         return "(empty session)"
-    parts = []
+
+    parts = ["## Transcript"]
     for line in lines:
         parts.append(f"[{line['speaker']}] {line['text']}")
+
     captures = db.get_session_screen_captures(session_id)
-    for cap in captures[-5:]:
-        parts.append(f"[Screen @ {cap['captured_at']}] {cap['ocr_text'][:500]}")
+    if captures:
+        parts.append("\n## Screen snapshots (captured when you spoke)")
+        for cap in captures:
+            ts = cap.get("captured_at", "")[:19]
+            parts.append(f"\n### {ts}\n{cap['ocr_text'][:800]}")
+
     return "\n".join(parts)
 
 
@@ -52,13 +64,12 @@ def _parse_summary_json(raw: str) -> dict[str, Any]:
 
 
 def summarize_session(session_id: str) -> dict[str, Any] | None:
-    api_key = db.get_setting("api_key")
-    if not api_key:
+    if not db.has_claude_api_key():
         logger.info("Skipping summarization — no API key")
         return None
 
-    transcript = _format_transcript(session_id)
-    if transcript == "(empty session)":
+    content = _format_session_for_ai(session_id)
+    if content == "(empty session)":
         return None
 
     try:
@@ -69,7 +80,7 @@ def summarize_session(session_id: str) -> dict[str, Any] | None:
             messages=[
                 {
                     "role": "user",
-                    "content": f"{SUMMARIZE_PROMPT}\n\n---\n\n{transcript}",
+                    "content": f"{SUMMARIZE_PROMPT}\n\n---\n\n{content}",
                 }
             ],
         )
@@ -87,7 +98,7 @@ def summarize_session(session_id: str) -> dict[str, Any] | None:
 
         db.clear_action_items(session_id)
         db.update_session_summary(session_id, title, summary)
-        db.insert_action_items(session_id, [str(a) for a in action_items])
+        db.insert_action_items(session_id, [str(a) for a in action_items if str(a).strip()])
 
         return {
             "session_id": session_id,
@@ -101,7 +112,7 @@ def summarize_session(session_id: str) -> dict[str, Any] | None:
 
 
 def _build_context(message: str) -> tuple[str, list[dict[str, str]]]:
-    chunks = embeddings.query(message, n=5)
+    chunks = embeddings.query(message, n=5, transcript_only=True)
     if not chunks:
         return "", []
 
@@ -132,19 +143,22 @@ async def chat_stream(
     message: str,
     history: list[dict[str, str]],
 ) -> AsyncIterator[dict[str, Any]]:
+    if not db.has_claude_api_key():
+        yield {"type": "error", "message": "Claude API key not configured. Add it in Settings."}
+        return
+
     context, citations = _build_context(message)
 
     system = CHAT_SYSTEM
     if context:
-        system += f"\n\nRelevant context from the user's memory:\n{context}"
+        system += f"\n\nRelevant transcript excerpts:\n{context}"
 
-    user_content = message
     messages: list[dict[str, str]] = []
     for h in history[-10:]:
         role = h.get("role", "user")
         if role in ("user", "assistant"):
             messages.append({"role": role, "content": h.get("content", "")})
-    messages.append({"role": "user", "content": user_content})
+    messages.append({"role": "user", "content": message})
 
     yield {"type": "citations", "citations": citations}
 

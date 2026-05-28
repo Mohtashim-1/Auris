@@ -6,13 +6,20 @@ import {
   sendNotification,
 } from "@tauri-apps/plugin-notification";
 import { LoadingScreen } from "./components/LoadingScreen";
+import { Onboarding } from "./components/Onboarding";
 import { Sidebar, type PageId } from "./components/Sidebar";
 import { AskAuris } from "./pages/AskAuris";
+import { Dashboard } from "./pages/Dashboard";
 import { History } from "./pages/History";
 import { Search } from "./pages/Search";
 import { Settings } from "./pages/Settings";
 import { Today } from "./pages/Today";
-import { api, type SessionSummary, type TranscriptLine } from "./lib/api";
+import {
+  api,
+  MIN_API_VERSION,
+  type SessionSummary,
+  type TranscriptLine,
+} from "./lib/api";
 
 function App() {
   const [page, setPage] = useState<PageId>("today");
@@ -22,6 +29,8 @@ function App() {
   const [modelError, setModelError] = useState<string | null>(null);
   const [sidecarStale, setSidecarStale] = useState(false);
   const [hasApiKey, setHasApiKey] = useState(false);
+  const [audioLevel, setAudioLevel] = useState(0);
+  const [showOnboarding, setShowOnboarding] = useState(false);
   const [lines, setLines] = useState<TranscriptLine[]>([]);
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [loading, setLoading] = useState(false);
@@ -29,6 +38,7 @@ function App() {
   const [sessionDurationSec, setSessionDurationSec] = useState(0);
   const recordingStartedAt = useRef<number | null>(null);
   const eventSourceRef = useRef<EventSource | null>(null);
+  const autoRecordDone = useRef(false);
 
   const syncTrayRecording = useCallback((rec: boolean) => {
     void invokeSafe("set_recording_state", { recording: rec });
@@ -46,7 +56,8 @@ function App() {
       setModelsReady(status.models_ready);
       setModelError(status.model_error);
       setHasApiKey(status.has_api_key);
-      setSidecarStale((status.api_version ?? 0) < 3);
+      setAudioLevel(status.audio_level ?? 0);
+      setSidecarStale((status.api_version ?? 0) < MIN_API_VERSION);
       syncTrayRecording(status.recording);
       if (status.recording && !recordingStartedAt.current) {
         recordingStartedAt.current = Date.now();
@@ -61,6 +72,19 @@ function App() {
       setModelsReady(false);
     }
   }, [syncTrayRecording]);
+
+  useEffect(() => {
+    api.getSettings().then((s) => {
+      const done =
+        s.onboarding_complete === "1" ||
+        localStorage.getItem("auris-onboarding-done") === "1";
+      setShowOnboarding(!done);
+    }).catch(() => {
+      setShowOnboarding(
+        localStorage.getItem("auris-onboarding-done") !== "1"
+      );
+    });
+  }, []);
 
   const notifySummaryReady = useCallback(
     async (title: string, summary: string) => {
@@ -102,6 +126,9 @@ function App() {
         if (payload.type === "summary_ready" && payload.title) {
           void notifySummaryReady(payload.title, payload.summary ?? "");
           refreshSessions();
+          void api.getSettings().then((s) => {
+            if (s.has_api_key) setHasApiKey(true);
+          });
         }
       } catch {
         /* ignore */
@@ -117,9 +144,9 @@ function App() {
 
   useEffect(() => {
     refreshStatus();
-    const interval = setInterval(refreshStatus, 3000);
+    const interval = setInterval(refreshStatus, recording ? 500 : 3000);
     return () => clearInterval(interval);
-  }, [refreshStatus]);
+  }, [refreshStatus, recording]);
 
   useEffect(() => {
     if (sidecarReady) connectStream();
@@ -178,6 +205,24 @@ function App() {
     }
   }, [refreshSessions, syncTrayRecording]);
 
+  useEffect(() => {
+    if (
+      !modelsReady ||
+      !sidecarReady ||
+      showOnboarding ||
+      autoRecordDone.current ||
+      recording
+    ) {
+      return;
+    }
+    api.getSettings().then((s) => {
+      if (s.auto_record_on_launch === "1" && !autoRecordDone.current) {
+        autoRecordDone.current = true;
+        void handleStart();
+      }
+    });
+  }, [modelsReady, sidecarReady, showOnboarding, recording, handleStart]);
+
   const handleRetryModels = async () => {
     try {
       const r = await api.retryModels();
@@ -227,8 +272,8 @@ function App() {
     return (
       <LoadingScreen
         message="Sidecar needs a restart"
-        submessage="An older Python backend is still running on port 9847. Quit Auris fully and run npm run tauri dev again, or run: fuser -k 9847/tcp"
-        error="Export, re-summarize, and auto-titles require API version 3."
+        submessage={`Requires API version ${MIN_API_VERSION}. Quit Auris and run: fuser -k 9847/tcp && npm run tauri dev`}
+        error="New features (dashboard, export, audio meter) need the latest sidecar."
       />
     );
   }
@@ -258,8 +303,11 @@ function App() {
             onStop={handleStop}
             onRetryModels={handleRetryModels}
             error={error}
+            audioLevel={audioLevel}
           />
         );
+      case "dashboard":
+        return <Dashboard />;
       case "history":
         return (
           <History
@@ -271,23 +319,34 @@ function App() {
       case "search":
         return <Search />;
       case "ask":
-        return <AskAuris />;
+        return <AskAuris hasApiKey={hasApiKey} sidecarReady={sidecarReady} />;
       case "settings":
         return <Settings />;
     }
   };
 
   return (
-    <div className="flex h-screen overflow-hidden">
-      <Sidebar
-        active={page}
-        onNavigate={setPage}
-        recording={recording}
-        sessionDurationSec={sessionDurationSec}
-        hasApiKey={hasApiKey}
-      />
-      <main className="min-w-0 flex-1 overflow-hidden">{renderPage()}</main>
-    </div>
+    <>
+      {showOnboarding && (
+        <Onboarding
+          hasApiKey={hasApiKey}
+          onComplete={() => {
+            setShowOnboarding(false);
+            void refreshStatus();
+          }}
+        />
+      )}
+      <div className="flex h-screen overflow-hidden">
+        <Sidebar
+          active={page}
+          onNavigate={setPage}
+          recording={recording}
+          sessionDurationSec={sessionDurationSec}
+          hasApiKey={hasApiKey}
+        />
+        <main className="min-w-0 flex-1 overflow-hidden">{renderPage()}</main>
+      </div>
+    </>
   );
 }
 

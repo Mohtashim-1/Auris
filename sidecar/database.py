@@ -105,7 +105,14 @@ def get_setting(key: str, default: str | None = None) -> str | None:
     return row["value"]
 
 
+def has_claude_api_key() -> bool:
+    key = (get_setting("api_key") or "").strip()
+    return key.startswith("sk-") and len(key) >= 20
+
+
 def set_setting(key: str, value: str) -> None:
+    if key == "api_key":
+        value = value.strip()
     with get_connection() as conn:
         conn.execute(
             "INSERT INTO settings (key, value) VALUES (?, ?) "
@@ -204,7 +211,6 @@ def get_session(session_id: str) -> dict[str, Any] | None:
     session = dict(row)
     session["transcript"] = get_session_transcript(session_id)
     session["action_items"] = get_session_action_items(session_id)
-    session["screen_captures"] = get_session_screen_captures(session_id)
     return session
 
 
@@ -296,3 +302,78 @@ def clear_action_items(session_id: str) -> None:
     with get_connection() as conn:
         conn.execute("DELETE FROM action_items WHERE session_id = ?", (session_id,))
         conn.commit()
+
+
+def update_session_title(session_id: str, title: str) -> None:
+    with get_connection() as conn:
+        conn.execute(
+            "UPDATE sessions SET title = ? WHERE id = ?",
+            (title.strip(), session_id),
+        )
+        conn.commit()
+
+
+def get_stats() -> dict[str, Any]:
+    data_dir = get_data_dir()
+    with get_connection() as conn:
+        session_count = conn.execute("SELECT COUNT(*) FROM sessions").fetchone()[0]
+        line_count = conn.execute("SELECT COUNT(*) FROM transcript_lines").fetchone()[0]
+        capture_count = conn.execute("SELECT COUNT(*) FROM screen_captures").fetchone()[0]
+        action_open = conn.execute(
+            "SELECT COUNT(*) FROM action_items WHERE done = 0"
+        ).fetchone()[0]
+        total_duration = conn.execute(
+            "SELECT COALESCE(SUM(duration_seconds), 0) FROM sessions"
+        ).fetchone()[0]
+
+    storage_bytes = 0
+    if data_dir.exists():
+        for p in data_dir.rglob("*"):
+            if p.is_file():
+                try:
+                    storage_bytes += p.stat().st_size
+                except OSError:
+                    pass
+
+    return {
+        "session_count": session_count,
+        "transcript_line_count": line_count,
+        "screen_capture_count": capture_count,
+        "open_action_items": action_open,
+        "total_duration_seconds": int(total_duration or 0),
+        "storage_bytes": storage_bytes,
+        "data_path": str(data_dir),
+    }
+
+
+def list_session_ids_older_than(days: int) -> list[str]:
+    cutoff = datetime.now(timezone.utc).timestamp() - days * 86400
+    ids: list[str] = []
+    with get_connection() as conn:
+        rows = conn.execute("SELECT id, started_at FROM sessions").fetchall()
+        for row in rows:
+            try:
+                ts = datetime.fromisoformat(row["started_at"]).timestamp()
+                if ts < cutoff:
+                    ids.append(row["id"])
+            except (TypeError, ValueError):
+                continue
+    return ids
+
+
+def delete_all_sessions() -> int:
+    with get_connection() as conn:
+        count = conn.execute("SELECT COUNT(*) FROM sessions").fetchone()[0]
+        conn.execute("DELETE FROM transcript_lines")
+        conn.execute("DELETE FROM action_items")
+        conn.execute("DELETE FROM screen_captures")
+        conn.execute("DELETE FROM sessions")
+        conn.commit()
+    chunks = get_data_dir() / "chunks"
+    if chunks.exists():
+        for p in chunks.glob("*.wav"):
+            try:
+                p.unlink()
+            except OSError:
+                pass
+    return int(count)

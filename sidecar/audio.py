@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import struct
 import threading
 import wave
 from collections import deque
@@ -26,6 +27,24 @@ PAUSE_THRESHOLD_S = 1.5
 VAD_AGGRESSIVENESS = 2
 
 CHUNKS_DIR = Path.home() / ".auris" / "data" / "chunks"
+
+_level_lock = threading.Lock()
+_current_level = 0.0
+
+
+def get_audio_level() -> float:
+    with _level_lock:
+        return _current_level
+
+
+def _rms_level(raw: bytes) -> float:
+    n = len(raw) // 2
+    if n == 0:
+        return 0.0
+    samples = struct.unpack(f"<{n}h", raw)
+    sq = sum(s * s for s in samples) / n
+    rms = (sq**0.5) / 32768.0
+    return min(1.0, rms * 4.0)
 
 
 class AudioPipeline:
@@ -77,8 +96,12 @@ class AudioPipeline:
         logger.info("Audio pipeline started")
 
         try:
+            global _current_level
             while not self._stop_event.is_set():
                 raw = stream.read(FRAME_SIZE, exception_on_overflow=False)
+                level = _rms_level(raw)
+                with _level_lock:
+                    _current_level = _current_level * 0.65 + level * 0.35
                 is_speech = self._vad.is_speech(raw, SAMPLE_RATE)
 
                 if is_speech:
@@ -102,6 +125,8 @@ class AudioPipeline:
             if self._audio:
                 self._audio.terminate()
                 self._audio = None
+            with _level_lock:
+                _current_level = 0.0
             logger.info("Audio pipeline stopped")
 
     def _flush_chunk(self, frames: deque[bytes]) -> None:

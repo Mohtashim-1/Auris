@@ -1,13 +1,31 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ChatMessage, type ChatMessageData } from "../components/ChatMessage";
 import { api, type ChatCitation } from "../lib/api";
 
-export function AskAuris() {
+interface Props {
+  hasApiKey: boolean;
+  sidecarReady: boolean;
+}
+
+export function AskAuris({ hasApiKey: hasApiKeyProp, sidecarReady }: Props) {
   const [messages, setMessages] = useState<ChatMessageData[]>([]);
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [hasApiKey, setHasApiKey] = useState(hasApiKeyProp);
   const bottomRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    setHasApiKey(hasApiKeyProp);
+  }, [hasApiKeyProp]);
+
+  useEffect(() => {
+    if (!sidecarReady) return;
+    api
+      .getSettings()
+      .then((s) => setHasApiKey(s.has_api_key ?? !!(s.api_key && s.api_key.startsWith("sk-"))))
+      .catch(() => {});
+  }, [sidecarReady]);
 
   const scrollDown = () => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -15,7 +33,7 @@ export function AskAuris() {
 
   const send = async () => {
     const text = input.trim();
-    if (!text || streaming) return;
+    if (!text || streaming || !hasApiKey) return;
 
     setInput("");
     setError(null);
@@ -65,18 +83,27 @@ export function AskAuris() {
     }
   };
 
+  const canChat = hasApiKey && sidecarReady;
+
   return (
     <div className="flex h-full flex-col">
       <header className="border-b border-gray-200 px-6 py-4 dark:border-gray-800">
         <h2 className="text-xl font-semibold">Ask Auris</h2>
         <p className="text-sm text-gray-500 dark:text-gray-400">
-          Chat with your conversation and screen memory
+          Chat over your transcripts (not screen OCR)
         </p>
       </header>
 
-      {!error && messages.length === 0 && (
+      {!sidecarReady && (
+        <div className="border-b border-red-200 bg-red-50 px-6 py-3 text-sm text-red-800 dark:border-red-800 dark:bg-red-900/20 dark:text-red-200">
+          Sidecar offline — run <code className="text-xs">npm run tauri dev</code> or{" "}
+          <code className="text-xs">npm run sidecar</code> (port 9847).
+        </div>
+      )}
+
+      {sidecarReady && !hasApiKey && (
         <div className="border-b border-amber-200 bg-amber-50 px-6 py-3 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-900/20 dark:text-amber-200">
-          Add your Claude API key in Settings to enable AI chat.
+          Add your Claude API key in Settings, click Save, then return here.
         </div>
       )}
 
@@ -87,9 +114,9 @@ export function AskAuris() {
       )}
 
       <div className="flex-1 space-y-4 overflow-y-auto p-6">
-        {messages.length === 0 && (
+        {messages.length === 0 && canChat && (
           <p className="text-center text-sm text-gray-400">
-            Ask anything about what Auris heard or saw.
+            Ask about what was said in your recorded sessions.
           </p>
         )}
         {messages.map((m, i) => (
@@ -109,13 +136,15 @@ export function AskAuris() {
           <input
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            disabled={streaming}
-            placeholder="Ask a question…"
-            className="flex-1 rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm outline-none ring-primary focus:ring-2 dark:border-gray-700 dark:bg-gray-900"
+            disabled={streaming || !canChat}
+            placeholder={
+              canChat ? "Ask a question…" : "Configure API key to chat"
+            }
+            className="flex-1 rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm outline-none ring-primary focus:ring-2 disabled:opacity-50 dark:border-gray-700 dark:bg-gray-900"
           />
           <button
             type="submit"
-            disabled={streaming || !input.trim()}
+            disabled={streaming || !input.trim() || !canChat}
             className="rounded-xl bg-primary px-5 py-2.5 text-sm font-medium text-white hover:bg-primary-dark disabled:opacity-50"
           >
             {streaming ? "…" : "Send"}

@@ -4,7 +4,6 @@ import {
   api,
   formatDate,
   formatDuration,
-  formatTime,
   type SessionDetail as Session,
 } from "../lib/api";
 
@@ -26,6 +25,9 @@ export function SessionDetail({
   const [error, setError] = useState<string | null>(null);
   const [summarizing, setSummarizing] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [editingTitle, setEditingTitle] = useState(false);
+  const [titleDraft, setTitleDraft] = useState("");
+  const [copied, setCopied] = useState(false);
 
   const load = () => {
     setLoading(true);
@@ -55,6 +57,27 @@ export function SessionDetail({
     } finally {
       setSummarizing(false);
     }
+  };
+
+  const handleRename = async () => {
+    if (!titleDraft.trim()) return;
+    try {
+      await api.renameSession(sessionId, titleDraft.trim());
+      setEditingTitle(false);
+      load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Rename failed");
+    }
+  };
+
+  const copyTranscript = async () => {
+    if (!session) return;
+    const text = session.transcript
+      .map((l) => `[${l.speaker}] ${l.text}`)
+      .join("\n");
+    await navigator.clipboard.writeText(text);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
   };
 
   const handleDelete = async () => {
@@ -98,10 +121,41 @@ export function SessionDetail({
           ← History
         </button>
         <div className="flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <h2 className="text-xl font-semibold">
-              {session.title || "Untitled session"}
-            </h2>
+          <div className="min-w-0 flex-1">
+            {editingTitle ? (
+              <div className="flex gap-2">
+                <input
+                  value={titleDraft}
+                  onChange={(e) => setTitleDraft(e.target.value)}
+                  className="flex-1 rounded-lg border px-2 py-1 text-lg dark:border-gray-700 dark:bg-gray-800"
+                />
+                <button
+                  type="button"
+                  onClick={() => void handleRename()}
+                  className="rounded-lg bg-primary px-3 py-1 text-sm text-white"
+                >
+                  Save
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setEditingTitle(false)}
+                  className="text-sm text-gray-500"
+                >
+                  Cancel
+                </button>
+              </div>
+            ) : (
+              <h2
+                className="cursor-pointer text-xl font-semibold hover:text-primary"
+                onClick={() => {
+                  setTitleDraft(session.title || "");
+                  setEditingTitle(true);
+                }}
+                title="Click to rename"
+              >
+                {session.title || "Untitled session"}
+              </h2>
+            )}
             <p className="text-sm text-gray-500">
               {formatDate(session.started_at)}
               {session.duration_seconds != null &&
@@ -109,6 +163,13 @@ export function SessionDetail({
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => void copyTranscript()}
+              className="rounded-lg border border-gray-200 px-3 py-1.5 text-xs hover:bg-gray-50 dark:border-gray-700 dark:hover:bg-gray-800"
+            >
+              {copied ? "Copied!" : "Copy transcript"}
+            </button>
             <button
               type="button"
               onClick={() =>
@@ -205,29 +266,6 @@ export function SessionDetail({
                 </li>
               ))}
             </ul>
-          </section>
-        )}
-
-        {session.screen_captures.length > 0 && (
-          <section className="mb-8">
-            <h3 className="mb-2 text-sm font-medium text-gray-500">
-              Screen context ({session.screen_captures.length})
-            </h3>
-            <div className="space-y-3">
-              {session.screen_captures.map((cap) => (
-                <div
-                  key={cap.id}
-                  className="rounded-xl border border-gray-200 bg-gray-50 p-3 dark:border-gray-800 dark:bg-gray-900"
-                >
-                  <time className="text-xs text-gray-400">
-                    {formatTime(cap.captured_at)}
-                  </time>
-                  <p className="mt-1 line-clamp-6 text-sm text-gray-700 dark:text-gray-300">
-                    {cap.ocr_text}
-                  </p>
-                </div>
-              ))}
-            </div>
           </section>
         )}
 

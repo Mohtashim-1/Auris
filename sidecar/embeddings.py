@@ -69,7 +69,7 @@ def embed_and_store(
         )
 
 
-def query(text: str, n: int = 5) -> list[dict[str, Any]]:
+def query(text: str, n: int = 5, transcript_only: bool = True) -> list[dict[str, Any]]:
     if not text.strip():
         return []
     init_embeddings()
@@ -79,11 +79,15 @@ def query(text: str, n: int = 5) -> list[dict[str, Any]]:
         if _collection.count() == 0:
             return []
         embedding = _model.encode(text, show_progress_bar=False).tolist()
-        results = _collection.query(
-            query_embeddings=[embedding],
-            n_results=min(n, _collection.count()),
-            include=["documents", "metadatas", "distances"],
-        )
+        where = {"type": "transcript"} if transcript_only else None
+        kwargs: dict[str, Any] = {
+            "query_embeddings": [embedding],
+            "n_results": min(n, _collection.count()),
+            "include": ["documents", "metadatas", "distances"],
+        }
+        if where:
+            kwargs["where"] = where
+        results = _collection.query(**kwargs)
 
     items: list[dict[str, Any]] = []
     ids = results.get("ids", [[]])[0]
@@ -109,6 +113,21 @@ def query(text: str, n: int = 5) -> list[dict[str, Any]]:
             }
         )
     return items
+
+
+def count_vectors() -> int:
+    init_embeddings()
+    assert _collection is not None
+    return _collection.count()
+
+
+def reset_all() -> None:
+    global _collection, _client
+    with _lock:
+        if _client is not None and _collection is not None:
+            existing = _collection.get()
+            if existing["ids"]:
+                _collection.delete(ids=existing["ids"])
 
 
 def delete_session(session_id: str) -> None:

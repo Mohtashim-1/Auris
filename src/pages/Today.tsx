@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import { AudioLevelMeter } from "../components/AudioLevelMeter";
 import { MicPermissionGuide } from "../components/MicPermissionGuide";
 import { TranscriptLine } from "../components/TranscriptLine";
 import { isMicError, type TranscriptLine as Line } from "../lib/api";
@@ -14,6 +15,7 @@ interface TodayProps {
   onStop: () => void;
   onRetryModels: () => void;
   error: string | null;
+  audioLevel: number;
 }
 
 export function Today({
@@ -27,6 +29,7 @@ export function Today({
   onStop,
   onRetryModels,
   error,
+  audioLevel,
 }: TodayProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
 
@@ -39,7 +42,7 @@ export function Today({
       <header className="border-b border-gray-200 px-6 py-4 dark:border-gray-800">
         <h2 className="text-xl font-semibold">Today</h2>
         <p className="text-sm text-gray-500 dark:text-gray-400">
-          Live transcript · Ctrl+Shift+R to toggle
+          Records speech + screenshots for tasks · Ctrl+Shift+R
         </p>
       </header>
 
@@ -71,6 +74,8 @@ export function Today({
             {error}
           </div>
         )}
+
+        {recording && <AudioLevelMeter level={audioLevel} />}
 
         <button
           type="button"

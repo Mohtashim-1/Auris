@@ -29,10 +29,14 @@ export function Settings() {
   const [storagePath, setStoragePath] = useState("");
   const [theme, setTheme] = useState<Theme>("system");
   const [startMinimized, setStartMinimized] = useState(true);
+  const [autoRecord, setAutoRecord] = useState(false);
+  const [retentionDays, setRetentionDays] = useState("30");
+  const [ocrMode, setOcrMode] = useState("speech");
   const [currentPath, setCurrentPath] = useState("");
   const [defaultPath, setDefaultPath] = useState("");
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [purgeMsg, setPurgeMsg] = useState<string | null>(null);
 
   useEffect(() => {
     api
@@ -44,6 +48,9 @@ export function Settings() {
         setStoragePath(s.storage_path ?? "");
         setTheme((s.theme as Theme) || "system");
         setStartMinimized(s.start_minimized !== "0");
+        setAutoRecord(s.auto_record_on_launch === "1");
+        setRetentionDays(s.retention_days ?? "30");
+        setOcrMode(s.ocr_mode ?? "speech");
         setCurrentPath(s.current_storage_path);
         setDefaultPath(s.default_storage_path);
       })
@@ -67,6 +74,9 @@ export function Settings() {
         storage_path: storagePath,
         theme,
         start_minimized: startMinimized ? "1" : "0",
+        auto_record_on_launch: autoRecord ? "1" : "0",
+        retention_days: retentionDays,
+        ocr_mode: ocrMode,
       });
       storeTheme(theme);
       applyTheme(theme);
@@ -145,20 +155,41 @@ export function Settings() {
 
         <section>
           <label className="mb-1.5 block text-sm font-medium">
-            Screenshot OCR interval
+            Screenshots during recording
           </label>
           <select
-            value={screenshotInterval}
-            onChange={(e) => setScreenshotInterval(e.target.value)}
-            className="w-full rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm dark:border-gray-700 dark:bg-gray-900"
+            value={ocrMode}
+            onChange={(e) => setOcrMode(e.target.value)}
+            className="mb-2 w-full rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm dark:border-gray-700 dark:bg-gray-900"
           >
-            {SCREENSHOT_INTERVALS.map((o) => (
-              <option key={o.value} value={o.value}>
-                {o.label}
-              </option>
-            ))}
+            <option value="speech">When you speak (recommended)</option>
+            <option value="interval">On a timer</option>
+            <option value="both">Speech + timer</option>
+            <option value="off">Off</option>
           </select>
+          <p className="text-xs text-gray-400">
+            Screenshots are used to generate action items, not shown in History.
+          </p>
         </section>
+
+        {(ocrMode === "interval" || ocrMode === "both") && (
+          <section>
+            <label className="mb-1.5 block text-sm font-medium">
+              Screenshot interval (seconds)
+            </label>
+            <select
+              value={screenshotInterval}
+              onChange={(e) => setScreenshotInterval(e.target.value)}
+              className="w-full rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm dark:border-gray-700 dark:bg-gray-900"
+            >
+              {SCREENSHOT_INTERVALS.filter((o) => o.value !== "0").map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+          </section>
+        )}
 
         <section>
           <label className="flex items-center gap-2 text-sm">
@@ -170,6 +201,84 @@ export function Settings() {
             />
             Start minimized to system tray
           </label>
+        </section>
+
+        <section>
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={autoRecord}
+              onChange={(e) => setAutoRecord(e.target.checked)}
+              className="rounded"
+            />
+            Auto-start recording when app opens
+          </label>
+        </section>
+
+        <section className="rounded-xl border border-red-200 p-4 dark:border-red-900">
+          <h3 className="text-sm font-medium text-red-800 dark:text-red-300">
+            Data management
+          </h3>
+          <p className="mt-1 text-xs text-gray-500">
+            Delete old sessions and free storage. This cannot be undone.
+          </p>
+          <div className="mt-3 flex flex-wrap items-end gap-3">
+            <div>
+              <label className="text-xs text-gray-500">Retention (days)</label>
+              <input
+                type="number"
+                min={1}
+                value={retentionDays}
+                onChange={(e) => setRetentionDays(e.target.value)}
+                className="mt-1 w-20 rounded-lg border px-2 py-1 text-sm dark:border-gray-700 dark:bg-gray-800"
+              />
+            </div>
+            <button
+              type="button"
+              onClick={() =>
+                void api
+                  .purgeData("retention", parseInt(retentionDays, 10) || 30)
+                  .then((r) =>
+                    setPurgeMsg(`Deleted ${r.deleted_sessions} old sessions`)
+                  )
+                  .catch((e) =>
+                    setPurgeMsg(e instanceof Error ? e.message : "Purge failed")
+                  )
+              }
+              className="rounded-lg border border-gray-200 px-3 py-1.5 text-xs dark:border-gray-700"
+            >
+              Purge old sessions
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                if (
+                  window.confirm(
+                    "Delete ALL sessions, transcripts, and memories?"
+                  )
+                ) {
+                  void api
+                    .purgeData("all")
+                    .then((r) =>
+                      setPurgeMsg(`Deleted all ${r.deleted_sessions} sessions`)
+                    )
+                    .catch((e) =>
+                      setPurgeMsg(
+                        e instanceof Error ? e.message : "Purge failed"
+                      )
+                    );
+                }
+              }}
+              className="rounded-lg bg-red-600 px-3 py-1.5 text-xs text-white"
+            >
+              Delete everything
+            </button>
+          </div>
+          {purgeMsg && (
+            <p className="mt-2 text-xs text-gray-600 dark:text-gray-400">
+              {purgeMsg}
+            </p>
+          )}
         </section>
 
         <section>

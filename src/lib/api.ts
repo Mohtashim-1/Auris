@@ -9,7 +9,21 @@ export interface StatusResponse {
   whisper_model: string;
   has_api_key: boolean;
   api_version?: number;
+  audio_level?: number;
 }
+
+export interface StatsResponse {
+  session_count: number;
+  transcript_line_count: number;
+  screen_capture_count: number;
+  open_action_items: number;
+  total_duration_seconds: number;
+  storage_bytes: number;
+  memory_vectors: number;
+  data_path: string;
+}
+
+export const MIN_API_VERSION = 4;
 
 export interface TranscriptLine {
   id: string;
@@ -46,7 +60,6 @@ export interface ScreenCapture {
 export interface SessionDetail extends SessionSummary {
   transcript: TranscriptLine[];
   action_items: ActionItem[];
-  screen_captures: ScreenCapture[];
 }
 
 export interface SearchResult {
@@ -74,6 +87,11 @@ export interface SettingsResponse {
   storage_path: string | null;
   theme: string | null;
   start_minimized: string | null;
+  auto_record_on_launch: string | null;
+  retention_days: string | null;
+  onboarding_complete: string | null;
+  ocr_mode: string | null;
+  has_api_key?: boolean;
   default_storage_path: string;
   current_storage_path: string;
 }
@@ -99,6 +117,8 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 export const api = {
   getStatus: () => request<StatusResponse>("/status"),
+
+  getStats: () => request<StatsResponse>("/stats"),
 
   isSidecarReachable: async (): Promise<boolean> => {
     try {
@@ -131,6 +151,18 @@ export const api = {
 
   deleteSession: (id: string) =>
     request<{ deleted: string }>(`/sessions/${id}`, { method: "DELETE" }),
+
+  renameSession: (id: string, title: string) =>
+    request<{ id: string; title: string }>(`/sessions/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ title }),
+    }),
+
+  purgeData: (mode: "all" | "retention", days = 30) =>
+    request<{ deleted_sessions: number; mode: string }>("/data/purge", {
+      method: "POST",
+      body: JSON.stringify({ mode, days }),
+    }),
 
   summarizeSession: (id: string) =>
     request<{ status: string; session_id: string }>(`/sessions/${id}/summarize`, {
@@ -168,7 +200,7 @@ export const api = {
   getSettings: () => request<SettingsResponse>("/settings"),
 
   saveSettings: (settings: Record<string, string>) =>
-    request<{ saved: string[] }>("/settings", {
+    request<{ saved: string[]; has_api_key?: boolean }>("/settings", {
       method: "POST",
       body: JSON.stringify({ settings }),
     }),

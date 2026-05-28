@@ -1,4 +1,4 @@
-"""Export session data as markdown or plain text."""
+"""Export session — transcript and action items only (no screen OCR)."""
 
 from __future__ import annotations
 
@@ -15,14 +15,13 @@ def export_session(session_id: str, fmt: str = "md") -> str:
     summary = session.get("summary") or ""
     lines = session.get("transcript", [])
     items = session.get("action_items", [])
-    captures = session.get("screen_captures", [])
 
     if fmt == "txt":
-        return _export_txt(title, started, summary, lines, items, captures)
-    return _export_md(title, started, summary, lines, items, captures)
+        return _export_txt(title, started, summary, lines, items)
+    return _export_md(title, started, summary, lines, items)
 
 
-def _export_md(title, started, summary, lines, items, captures) -> str:
+def _export_md(title, started, summary, lines, items) -> str:
     parts = [f"# {title}", f"*{started}*", ""]
     if summary:
         parts += ["## Summary", summary, ""]
@@ -35,18 +34,14 @@ def _export_md(title, started, summary, lines, items, captures) -> str:
     if lines:
         parts.append("## Transcript")
         for line in lines:
-            parts.append(f"**{line['speaker']}** ({line['started_at']}): {line['text']}")
+            parts.append(
+                f"**{line['speaker']}** ({line['started_at']}): {line['text']}"
+            )
         parts.append("")
-    if captures:
-        parts.append("## Screen context")
-        for cap in captures:
-            parts.append(f"### {cap['captured_at']}")
-            parts.append(cap["ocr_text"][:2000])
-            parts.append("")
     return "\n".join(parts)
 
 
-def _export_txt(title, started, summary, lines, items, captures) -> str:
+def _export_txt(title, started, summary, lines, items) -> str:
     parts = [title, started, "=" * 40, ""]
     if summary:
         parts += ["SUMMARY", summary, ""]
@@ -61,10 +56,4 @@ def _export_txt(title, started, summary, lines, items, captures) -> str:
         for line in lines:
             parts.append(f"{line['speaker']}: {line['text']}")
         parts.append("")
-    if captures:
-        parts.append("SCREEN")
-        for cap in captures:
-            parts.append(f"--- {cap['captured_at']} ---")
-            parts.append(cap["ocr_text"][:2000])
-            parts.append("")
     return "\n".join(parts)

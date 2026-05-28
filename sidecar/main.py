@@ -21,7 +21,7 @@ import ai
 import database as db
 import embeddings
 import export as export_mod
-from audio import AudioPipeline
+from audio import AudioPipeline, get_audio_level
 from ocr import OcrPipeline
 from transcribe import TranscriptionService, TranscriptionWorker
 
@@ -40,7 +40,7 @@ logging.basicConfig(
 logger = logging.getLogger("auris.sidecar")
 
 PORT = 9847
-API_VERSION = 3
+API_VERSION = 4
 
 
 class AppState:
@@ -64,6 +64,8 @@ class AppState:
         self._loop = loop
 
     def _on_transcript_line(self, line: dict[str, Any]) -> None:
+        if self.ocr_pipeline:
+            self.ocr_pipeline.on_speech()
         if self._loop is None:
             return
         asyncio.run_coroutine_threadsafe(self.broadcast_event("transcript", line=line), self._loop)
@@ -98,6 +100,9 @@ class AppState:
         except ValueError:
             return 10
 
+    def _ocr_mode(self) -> str:
+        return db.get_setting("ocr_mode", "speech") or "speech"
+
     def start_recording(self) -> dict[str, Any]:
         if self.recording:
             return {"session_id": self.session_id, "status": "already_recording"}
@@ -118,9 +123,13 @@ class AppState:
         self.audio_pipeline = AudioPipeline(on_chunk=on_chunk)
         self.audio_pipeline.start()
 
-        interval = self._ocr_interval()
-        if interval > 0:
-            self.ocr_pipeline = OcrPipeline(self.session_id, interval_seconds=interval)
+        mode = self._ocr_mode()
+        if mode != "off":
+            self.ocr_pipeline = OcrPipeline(
+                self.session_id,
+                interval_seconds=self._ocr_interval(),
+                mode=mode,
+            )
             self.ocr_pipeline.start()
 
         logger.info("Recording started: session %s", self.session_id)
@@ -178,6 +187,7 @@ class AppState:
                     session_id=result["session_id"],
                     title=result["title"],
                     summary=result["summary"],
+                    action_items=result.get("action_items", []),
                 ),
                 self._loop,
             )
@@ -218,6 +228,15 @@ class ActionItemPatch(BaseModel):
     done: bool
 
 
+class SessionTitlePatch(BaseModel):
+    title: str
+
+
+class PurgeBody(BaseModel):
+    mode: str  # "all" | "retention"
+    days: int = 30
+
+
 @app.get("/status")
 def get_status() -> dict[str, Any]:
     return {
@@ -227,9 +246,20 @@ def get_status() -> dict[str, Any]:
         "models_ready": state.models_ready,
         "model_error": state.model_error,
         "whisper_model": state.whisper_model,
-        "has_api_key": bool(db.get_setting("api_key")),
+        "has_api_key": db.has_claude_api_key(),
         "api_version": API_VERSION,
+        "audio_level": round(get_audio_level(), 3) if state.recording else 0.0,
     }
+
+
+@app.get("/stats")
+def get_stats():
+    stats = db.get_stats()
+    try:
+        stats["memory_vectors"] = embeddings.count_vectors()
+    except Exception:
+        stats["memory_vectors"] = 0
+    return stats
 
 
 @app.post("/recording/start")
@@ -288,13 +318,23 @@ def list_sessions():
 # Sub-routes must be registered before GET /sessions/{session_id}
 
 
+@app.patch("/sessions/{session_id}")
+def patch_session(session_id: str, body: SessionTitlePatch):
+    if not db.get_session(session_id):
+        raise HTTPException(status_code=404, detail="Session not found")
+    if not body.title.strip():
+        raise HTTPException(status_code=400, detail="Title cannot be empty")
+    db.update_session_title(session_id, body.title.strip())
+    return {"id": session_id, "title": body.title.strip()}
+
+
 @app.post("/sessions/{session_id}/summarize")
 def summarize_session_endpoint(session_id: str):
     session = db.get_session(session_id)
     if session is None:
         raise HTTPException(status_code=404, detail="Session not found")
-    if not db.get_setting("api_key"):
-        raise HTTPException(status_code=400, detail="Claude API key required")
+    if not db.has_claude_api_key():
+        raise HTTPException(status_code=400, detail="Claude API key required. Save it in Settings.")
 
     def run():
         result = ai.summarize_session(session_id)
@@ -387,6 +427,29 @@ async def chat(req: ChatRequest):
     )
 
 
+@app.post("/data/purge")
+def purge_data(body: PurgeBody):
+    if body.mode == "all":
+        deleted = db.delete_all_sessions()
+        try:
+            embeddings.reset_all()
+        except Exception:
+            logger.exception("ChromaDB reset failed")
+        return {"deleted_sessions": deleted, "mode": "all"}
+
+    if body.mode == "retention":
+        ids = db.list_session_ids_older_than(max(1, body.days))
+        for sid in ids:
+            db.delete_session(sid)
+            try:
+                embeddings.delete_session(sid)
+            except Exception:
+                pass
+        return {"deleted_sessions": len(ids), "mode": "retention", "days": body.days}
+
+    raise HTTPException(status_code=400, detail="mode must be 'all' or 'retention'")
+
+
 @app.get("/settings")
 def get_settings():
     keys = [
@@ -396,8 +459,13 @@ def get_settings():
         "storage_path",
         "theme",
         "start_minimized",
+        "auto_record_on_launch",
+        "retention_days",
+        "onboarding_complete",
+        "ocr_mode",
     ]
     result = {k: db.get_setting(k) for k in keys}
+    result["has_api_key"] = db.has_claude_api_key()
     result["default_storage_path"] = str(Path.home() / ".auris" / "data")
     result["current_storage_path"] = str(db.get_data_dir())
     return result
@@ -413,7 +481,9 @@ def save_settings(body: SettingsBody):
             state.transcription.set_model(state.whisper_model)
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
-    return {"saved": list(body.settings.keys())}
+    if "api_key" in body.settings:
+        logger.info("API key updated (has_key=%s)", db.has_claude_api_key())
+    return {"saved": list(body.settings.keys()), "has_api_key": db.has_claude_api_key()}
 
 
 @app.post("/models/retry")

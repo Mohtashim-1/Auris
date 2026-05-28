@@ -1,4 +1,10 @@
-export type PageId = "today" | "history" | "search" | "ask" | "settings";
+export type PageId =
+  | "today"
+  | "dashboard"
+  | "history"
+  | "search"
+  | "ask"
+  | "settings";
 
 interface SidebarProps {
   active: PageId;
@@ -10,6 +16,7 @@ interface SidebarProps {
 
 const NAV: { id: PageId; label: string }[] = [
   { id: "today", label: "Today" },
+  { id: "dashboard", label: "Dashboard" },
   { id: "history", label: "History" },
   { id: "search", label: "Search" },
   { id: "ask", label: "Ask Auris" },
