@@ -242,6 +242,49 @@ export function SessionDetail({
           )
         )}
 
+        {session.screen_captures?.length > 0 && (
+          <section className="mb-8">
+            <h3 className="mb-2 text-sm font-medium text-gray-500">
+              Screenshots ({session.screen_captures.length})
+            </h3>
+            <p className="mb-3 text-xs text-gray-400">
+              Captured while recording. Text below is what OCR read from each
+              screen.
+            </p>
+            <div className="space-y-4">
+              {session.screen_captures.map((cap) => (
+                <div
+                  key={cap.id}
+                  className="overflow-hidden rounded-xl border border-gray-200 dark:border-gray-800"
+                >
+                  {cap.has_image && (
+                    <a
+                      href={api.captureImageUrl(sessionId, cap.id)}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="block bg-gray-100 dark:bg-gray-950"
+                    >
+                      <img
+                        src={api.captureImageUrl(sessionId, cap.id)}
+                        alt={`Screenshot ${formatDate(cap.captured_at)}`}
+                        className="max-h-64 w-full object-contain object-left-top"
+                      />
+                    </a>
+                  )}
+                  <div className="border-t border-gray-200 p-3 dark:border-gray-800">
+                    <p className="mb-1 text-xs text-gray-400">
+                      {formatDate(cap.captured_at)}
+                    </p>
+                    <p className="max-h-32 overflow-y-auto whitespace-pre-wrap text-xs text-gray-600 dark:text-gray-300">
+                      {cap.ocr_text}
+                    </p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
+
         {session.action_items.length > 0 && (
           <section className="mb-8">
             <h3 className="mb-2 text-sm font-medium text-gray-500">

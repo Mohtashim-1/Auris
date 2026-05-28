@@ -14,7 +14,7 @@ from typing import Any
 import uvicorn
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
 import ai
@@ -22,7 +22,7 @@ import database as db
 import embeddings
 import export as export_mod
 from audio import AudioPipeline, get_audio_level
-from ocr import OcrPipeline
+from ocr import OcrPipeline, check_ocr_available, get_ocr_status
 from transcribe import TranscriptionService, TranscriptionWorker
 
 LOG_DIR = Path.home() / ".auris" / "logs"
@@ -63,6 +63,14 @@ class AppState:
     def set_loop(self, loop: asyncio.AbstractEventLoop) -> None:
         self._loop = loop
 
+    def _on_ocr_capture(self, count: int) -> None:
+        if self._loop is None:
+            return
+        asyncio.run_coroutine_threadsafe(
+            self.broadcast_event("screenshot", count=count),
+            self._loop,
+        )
+
     def _on_transcript_line(self, line: dict[str, Any]) -> None:
         if self.ocr_pipeline:
             self.ocr_pipeline.on_speech()
@@ -86,6 +94,7 @@ class AppState:
         try:
             await asyncio.to_thread(self.transcription.load_model)
             await asyncio.to_thread(embeddings.init_embeddings)
+            await asyncio.to_thread(check_ocr_available)
             self.models_ready = True
             self.model_error = None
             logger.info("Models ready")
@@ -101,7 +110,7 @@ class AppState:
             return 10
 
     def _ocr_mode(self) -> str:
-        return db.get_setting("ocr_mode", "speech") or "speech"
+        return db.get_setting("ocr_mode", "both") or "both"
 
     def start_recording(self) -> dict[str, Any]:
         if self.recording:
@@ -129,6 +138,7 @@ class AppState:
                 self.session_id,
                 interval_seconds=self._ocr_interval(),
                 mode=mode,
+                on_capture=self._on_ocr_capture,
             )
             self.ocr_pipeline.start()
 
@@ -249,6 +259,7 @@ def get_status() -> dict[str, Any]:
         "has_api_key": db.has_claude_api_key(),
         "api_version": API_VERSION,
         "audio_level": round(get_audio_level(), 3) if state.recording else 0.0,
+        **get_ocr_status(),
     }
 
 
@@ -392,6 +403,19 @@ def get_session(session_id: str):
     if session is None:
         raise HTTPException(status_code=404, detail="Session not found")
     return session
+
+
+@app.get("/sessions/{session_id}/captures/{capture_id}/image")
+def get_capture_image(session_id: str, capture_id: str):
+    path = db.capture_image_path(session_id, capture_id)
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="Image not found")
+    return FileResponse(path, media_type="image/png")
+
+
+@app.get("/action-items")
+def list_action_items(open_only: bool = Query(False)):
+    return db.list_all_action_items(open_only=open_only)
 
 
 @app.patch("/action-items/{item_id}")

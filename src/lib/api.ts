@@ -10,6 +10,10 @@ export interface StatusResponse {
   has_api_key: boolean;
   api_version?: number;
   audio_level?: number;
+  ocr_ready?: boolean;
+  ocr_error?: string | null;
+  last_capture_at?: string | null;
+  captures_this_session?: number;
 }
 
 export interface StatsResponse {
@@ -51,15 +55,23 @@ export interface ActionItem {
   created_at: string;
 }
 
+export interface ActionItemWithSession extends ActionItem {
+  session_id: string;
+  title: string | null;
+  started_at: string;
+}
+
 export interface ScreenCapture {
   id: string;
   ocr_text: string;
   captured_at: string;
+  has_image?: boolean;
 }
 
 export interface SessionDetail extends SessionSummary {
   transcript: TranscriptLine[];
   action_items: ActionItem[];
+  screen_captures: ScreenCapture[];
 }
 
 export interface SearchResult {
@@ -149,6 +161,9 @@ export const api = {
 
   getSession: (id: string) => request<SessionDetail>(`/sessions/${id}`),
 
+  captureImageUrl: (sessionId: string, captureId: string) =>
+    `${SIDECAR_BASE}/sessions/${sessionId}/captures/${captureId}/image`,
+
   deleteSession: (id: string) =>
     request<{ deleted: string }>(`/sessions/${id}`, { method: "DELETE" }),
 
@@ -204,6 +219,11 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ settings }),
     }),
+
+  listActionItems: (openOnly = false) =>
+    request<ActionItemWithSession[]>(
+      `/action-items?open_only=${openOnly ? "true" : "false"}`
+    ),
 
   toggleActionItem: (id: string, done: boolean) =>
     request<{ id: string; done: boolean }>(`/action-items/${id}`, {

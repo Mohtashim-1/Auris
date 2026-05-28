@@ -13,6 +13,7 @@ import { Dashboard } from "./pages/Dashboard";
 import { History } from "./pages/History";
 import { Search } from "./pages/Search";
 import { Settings } from "./pages/Settings";
+import { Tasks } from "./pages/Tasks";
 import { Today } from "./pages/Today";
 import {
   api,
@@ -36,6 +37,10 @@ function App() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [sessionDurationSec, setSessionDurationSec] = useState(0);
+  const [ocrReady, setOcrReady] = useState<boolean | undefined>(undefined);
+  const [ocrError, setOcrError] = useState<string | null>(null);
+  const [captureCount, setCaptureCount] = useState(0);
+  const [historySessionId, setHistorySessionId] = useState<string | null>(null);
   const recordingStartedAt = useRef<number | null>(null);
   const eventSourceRef = useRef<EventSource | null>(null);
   const autoRecordDone = useRef(false);
@@ -57,6 +62,9 @@ function App() {
       setModelError(status.model_error);
       setHasApiKey(status.has_api_key);
       setAudioLevel(status.audio_level ?? 0);
+      setOcrReady(status.ocr_ready);
+      setOcrError(status.ocr_error ?? null);
+      setCaptureCount(status.captures_this_session ?? 0);
       setSidecarStale((status.api_version ?? 0) < MIN_API_VERSION);
       syncTrayRecording(status.recording);
       if (status.recording && !recordingStartedAt.current) {
@@ -119,9 +127,13 @@ function App() {
           line?: TranscriptLine;
           title?: string;
           summary?: string;
+          count?: number;
         };
         if (payload.type === "transcript" && payload.line) {
           setLines((prev) => [...prev, payload.line!]);
+        }
+        if (payload.type === "screenshot" && typeof payload.count === "number") {
+          setCaptureCount(payload.count);
         }
         if (payload.type === "summary_ready" && payload.title) {
           void notifySummaryReady(payload.title, payload.summary ?? "");
@@ -179,6 +191,7 @@ function App() {
     try {
       await api.startRecording();
       recordingStartedAt.current = Date.now();
+      setCaptureCount(0);
       setRecording(true);
       syncTrayRecording(true);
       setSessionDurationSec(0);
@@ -304,16 +317,30 @@ function App() {
             onRetryModels={handleRetryModels}
             error={error}
             audioLevel={audioLevel}
+            ocrReady={ocrReady}
+            ocrError={ocrError}
+            captureCount={captureCount}
           />
         );
       case "dashboard":
         return <Dashboard />;
+      case "tasks":
+        return (
+          <Tasks
+            onOpenSession={(id) => {
+              setHistorySessionId(id);
+              setPage("history");
+            }}
+          />
+        );
       case "history":
         return (
           <History
             sessions={sessions}
             hasApiKey={hasApiKey}
             onRefresh={refreshSessions}
+            initialSessionId={historySessionId}
+            onInitialSessionConsumed={() => setHistorySessionId(null)}
           />
         );
       case "search":

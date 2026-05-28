@@ -175,7 +175,16 @@ pub fn run() {
 
         let shortcut =
             Shortcut::new(Some(Modifiers::CONTROL | Modifiers::SHIFT), Code::KeyR);
-        app.global_shortcut().register(shortcut)?;
+        let gs = app.global_shortcut();
+        // Dev restarts often leave a zombie process holding this shortcut
+        let _ = gs.unregister(shortcut);
+        let _ = gs.unregister_all();
+        if let Err(e) = gs.register(shortcut) {
+            eprintln!(
+                "Global shortcut Ctrl+Shift+R unavailable ({e}). \
+                 Quit other Auris instances: pkill -f 'target/debug/auris'"
+            );
+        }
 
         let _tray = TrayIconBuilder::new()
             .icon(app.default_window_icon().unwrap().clone())
@@ -240,6 +249,7 @@ pub fn run() {
         .expect("error while running tauri application")
         .run(|app_handle, event| {
             if let RunEvent::Exit = event {
+                let _ = app_handle.global_shortcut().unregister_all();
                 stop_sidecar();
             }
             if let RunEvent::WindowEvent {

@@ -16,6 +16,9 @@ interface TodayProps {
   onRetryModels: () => void;
   error: string | null;
   audioLevel: number;
+  ocrReady?: boolean;
+  ocrError?: string | null;
+  captureCount?: number;
 }
 
 export function Today({
@@ -30,6 +33,9 @@ export function Today({
   onRetryModels,
   error,
   audioLevel,
+  ocrReady,
+  ocrError,
+  captureCount = 0,
 }: TodayProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
 
@@ -76,6 +82,21 @@ export function Today({
         )}
 
         {recording && <AudioLevelMeter level={audioLevel} />}
+
+        {recording && ocrReady === false && ocrError && (
+          <div className="mb-3 rounded-lg bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:bg-amber-900/30 dark:text-amber-200">
+            Screenshots disabled: {ocrError}
+          </div>
+        )}
+
+        {recording && ocrReady && (
+          <p className="mb-3 text-xs text-gray-500 dark:text-gray-400">
+            Screenshots this session: {captureCount}
+            {captureCount === 0
+              ? " — first capture within ~12s of starting"
+              : " — open History after you stop to view them"}
+          </p>
+        )}
 
         <button
           type="button"

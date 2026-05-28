@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { SessionCard } from "../components/SessionCard";
 import { SessionDetail } from "./SessionDetail";
 import type { SessionSummary } from "../lib/api";
@@ -7,10 +7,25 @@ interface Props {
   sessions: SessionSummary[];
   hasApiKey: boolean;
   onRefresh: () => void;
+  initialSessionId?: string | null;
+  onInitialSessionConsumed?: () => void;
 }
 
-export function History({ sessions, hasApiKey, onRefresh }: Props) {
+export function History({
+  sessions,
+  hasApiKey,
+  onRefresh,
+  initialSessionId,
+  onInitialSessionConsumed,
+}: Props) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (initialSessionId) {
+      setSelectedId(initialSessionId);
+      onInitialSessionConsumed?.();
+    }
+  }, [initialSessionId, onInitialSessionConsumed]);
   const [query, setQuery] = useState("");
 
   const filtered = useMemo(() => {

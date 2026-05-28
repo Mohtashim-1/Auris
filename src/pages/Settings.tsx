@@ -50,7 +50,7 @@ export function Settings() {
         setStartMinimized(s.start_minimized !== "0");
         setAutoRecord(s.auto_record_on_launch === "1");
         setRetentionDays(s.retention_days ?? "30");
-        setOcrMode(s.ocr_mode ?? "speech");
+        setOcrMode(s.ocr_mode ?? "both");
         setCurrentPath(s.current_storage_path);
         setDefaultPath(s.default_storage_path);
       })
@@ -162,9 +162,9 @@ export function Settings() {
             onChange={(e) => setOcrMode(e.target.value)}
             className="mb-2 w-full rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm dark:border-gray-700 dark:bg-gray-900"
           >
-            <option value="speech">When you speak (recommended)</option>
-            <option value="interval">On a timer</option>
-            <option value="both">Speech + timer</option>
+            <option value="both">Speech + timer (recommended)</option>
+            <option value="speech">When you speak</option>
+            <option value="interval">On a timer only</option>
             <option value="off">Off</option>
           </select>
           <p className="text-xs text-gray-400">

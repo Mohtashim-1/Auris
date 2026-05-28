@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shutil
 import sqlite3
 import uuid
 from datetime import datetime, timezone
@@ -211,6 +212,7 @@ def get_session(session_id: str) -> dict[str, Any] | None:
     session = dict(row)
     session["transcript"] = get_session_transcript(session_id)
     session["action_items"] = get_session_action_items(session_id)
+    session["screen_captures"] = get_session_screen_captures(session_id)
     return session
 
 
@@ -223,6 +225,10 @@ def get_session_brief(session_id: str) -> dict[str, Any] | None:
     return dict(row) if row else None
 
 
+def capture_image_path(session_id: str, capture_id: str) -> Path:
+    return get_data_dir() / "captures" / session_id / f"{capture_id}.png"
+
+
 def get_session_screen_captures(session_id: str) -> list[dict[str, Any]]:
     with get_connection() as conn:
         rows = conn.execute(
@@ -230,7 +236,12 @@ def get_session_screen_captures(session_id: str) -> list[dict[str, Any]]:
             "WHERE session_id = ? ORDER BY captured_at ASC",
             (session_id,),
         ).fetchall()
-    return [dict(r) for r in rows]
+    out: list[dict[str, Any]] = []
+    for r in rows:
+        item = dict(r)
+        item["has_image"] = capture_image_path(session_id, item["id"]).is_file()
+        out.append(item)
+    return out
 
 
 def insert_screen_capture(
@@ -287,6 +298,9 @@ def delete_session(session_id: str) -> None:
         conn.execute("DELETE FROM screen_captures WHERE session_id = ?", (session_id,))
         conn.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
         conn.commit()
+    cap_dir = get_data_dir() / "captures" / session_id
+    if cap_dir.is_dir():
+        shutil.rmtree(cap_dir, ignore_errors=True)
 
 
 def update_session_summary(session_id: str, title: str, summary: str) -> None:
@@ -359,6 +373,32 @@ def list_session_ids_older_than(days: int) -> list[str]:
             except (TypeError, ValueError):
                 continue
     return ids
+
+
+def list_all_action_items(open_only: bool = False) -> list[dict[str, Any]]:
+    with get_connection() as conn:
+        if open_only:
+            rows = conn.execute(
+                """
+                SELECT a.id, a.text, a.done, a.created_at, a.session_id,
+                       s.title, s.started_at
+                FROM action_items a
+                JOIN sessions s ON s.id = a.session_id
+                WHERE a.done = 0
+                ORDER BY a.created_at DESC
+                """
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """
+                SELECT a.id, a.text, a.done, a.created_at, a.session_id,
+                       s.title, s.started_at
+                FROM action_items a
+                JOIN sessions s ON s.id = a.session_id
+                ORDER BY a.done ASC, a.created_at DESC
+                """
+            ).fetchall()
+    return [dict(r) for r in rows]
 
 
 def delete_all_sessions() -> int:
